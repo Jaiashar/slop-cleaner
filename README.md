@@ -26,10 +26,14 @@ When you work with AI coding agents, a lot gets left behind: an Android emulator
   - leftover agent tools (headless browsers, MCP servers) whose session already ended,
   - real memory pressure (not just swap, which is normal on a Mac).
 - **Last used, for everything**: last in front for apps, last client for servers, last driven for emulators, last activity for Claude sessions. When it hasn't seen something used, it says "since Slop Cleaner started", never more than it knows.
-- **Sweep**: one button cleans everything on the list that's safe right now.
+- **Sweep**: one button cleans everything on the list that's safe right now. It never includes your apps.
 - **Automate**: optionally close things after they've gone *unused* (not just open) for a while, with a 5-minute heads-up and a "Keep it running" button.
 - **Smart timing**: instead of one fixed number, it learns how you use each item (your usual breaks with it) and gives more time to anything you brought back after it was closed. What it learns stays on your Mac.
 - **Flags apps that don't close**: if an app is asked to quit and stays open (usually it's asking about unsaved work), it shows up on the list with a "Show it" button.
+
+## Your apps are yours
+
+Apps you open yourself (Spotify, your browser, your editor, Slack…) are never closed for you. Slop Cleaner tells them apart by where they live: anything inside an app bundle (like `/Applications/Spotify.app`) is that app, and the things it cleans up are recognized by what they are (an Android emulator process, a simulator, a dev server like Vite or Expo, a Claude Code session). Automate has no setting for apps at all, Sweep skips them, and an app that's open but idle is never even suggested. The one exception: if an app's main process is stuck at a full CPU core for 15+ minutes while you're not using it, you'll see a card, and only if you click its Quit button does it get a polite ⌘Q (it can still ask you about unsaved work).
 
 ## It never breaks what you're using
 

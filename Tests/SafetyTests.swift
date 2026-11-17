@@ -196,3 +196,43 @@ final class SafetyTests: XCTestCase {
         XCTAssertEqual(Format.ago(30), "just now")
     }
 }
+
+/// Your apps (Spotify, a browser, an editor…) are never closed by Automate or Sweep.
+final class AppsAreLeftAloneTests: XCTestCase {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    func spotify(cpu: Double) -> Thing {
+        let p = ProcessSnapshot(pid: 1111, ppid: 1, uid: getuid(), name: "Spotify",
+                                path: "/Applications/Spotify.app/Contents/MacOS/Spotify", args: [], cwd: nil,
+                                startTime: now.addingTimeInterval(-9 * 86400), cpu: cpu, memory: 700 << 20)
+        return Classifier.classify([p]).things[0]
+    }
+
+    func ctx(_ t: Thing, _ h: History) -> RuleContext {
+        RuleContext(things: [t], stats: SystemStats(), history: h, now: now, thresholds: .make(.normal),
+                    driven: [], locks: { _ in nil }, frontmostPID: nil, selfPID: 99999)
+    }
+
+    func testAnAppIsNeverAnAutomateTarget() {
+        let t = spotify(cpu: 0)
+        XCTAssertEqual(t.kind, .app(bundlePath: "/Applications/Spotify.app"))
+        XCTAssertNil(AutoCategory.of(t), "Automate has no category for apps, so it can never close one")
+    }
+
+    func testAnIdleAppIsNeverSuggested() {
+        let t = spotify(cpu: 1)
+        let h = History()
+        h.seed(id: t.id, cpu: 1, minutes: 25, endingAt: now)
+        XCTAssertTrue(Rules.evaluate(ctx(t, h)).isEmpty, "open for 9 days and unused is fine: apps are yours")
+    }
+
+    func testAStuckAppGetsACardButSweepNeverIncludesIt() {
+        let t = spotify(cpu: 100)
+        let h = History()
+        h.seed(id: t.id, cpu: 100, minutes: 16, endingAt: now)
+        let s = Rules.evaluate(ctx(t, h))
+        XCTAssertEqual(s.count, 1)
+        if case .quitApp = s[0].action {} else { XCTFail("only a polite ⌘Q, from its own button") }
+        XCTAssertTrue(AppState.sweepTargets(s).isEmpty, "Sweep never quits an app")
+    }
+}

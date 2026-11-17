@@ -266,34 +266,31 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// The broom: every safe cleanup on screen, in one go.
-    func sweepAll() {
+    /// What Sweep cleans: idle devices, servers, sessions, stuck tools. Never apps: an app (Spotify, a browser…)
+    /// only ever quits from its own card's button, one at a time, with a polite ⌘Q.
+    static func sweepTargets(_ suggestions: [Suggestion]) -> [String] {
         var ids: [String] = []
         for s in suggestions where s.blockedNote == nil {
             switch s.action {
             case .sweep(let list): ids += list
-            case .stopEmulator, .shutdownSimulator, .terminate, .quitApp, .stopSession:
+            case .stopEmulator, .shutdownSimulator, .terminate, .stopSession:
                 if let id = s.thingID { ids.append(id) }
-            default: break
+            case .quitApp, .copyCommand, .openClaude, .showApp, .none:
+                break
             }
         }
         var seen = Set<String>()
-        ids = ids.filter { seen.insert($0).inserted }
+        return ids.filter { seen.insert($0).inserted }
+    }
+
+    /// The broom: every safe cleanup on screen, in one go.
+    func sweepAll() {
+        let ids = Self.sweepTargets(suggestions)
         guard !ids.isEmpty else { flash("Nothing to sweep."); return }
         sweep(ids, key: "sweep-all", what: "thing")
     }
 
-    var sweepableCount: Int {
-        var n = 0
-        for s in suggestions where s.blockedNote == nil {
-            switch s.action {
-            case .sweep(let list): n += list.count
-            case .stopEmulator, .shutdownSimulator, .terminate, .quitApp, .stopSession: n += s.thingID == nil ? 0 : 1
-            default: break
-            }
-        }
-        return n
-    }
+    var sweepableCount: Int { Self.sweepTargets(suggestions).count }
 
     /// From a suggestion card or its notification.
     func perform(_ s: Suggestion) {
