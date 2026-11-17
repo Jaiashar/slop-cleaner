@@ -1,0 +1,5 @@
+build/
+SlopCleaner.xcodeproj/
+Sources/Info.plist
+.DS_Store
+*.xcuserstate

@@ -1,0 +1,60 @@
+name: SlopCleaner
+options:
+  bundleIdPrefix: io.github.jaiashar
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+targets:
+  SlopCleaner:
+    type: application
+    platform: macOS
+    sources:
+      - Sources
+      - path: Resources
+        buildPhase: resources
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: Slop Cleaner
+        CFBundleName: Slop Cleaner
+        CFBundleIconFile: AppIcon
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        LSUIElement: true
+        LSApplicationCategoryType: public.app-category.utilities
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.jaiashar.slopcleaner
+        PRODUCT_NAME: Slop Cleaner
+        PRODUCT_MODULE_NAME: SlopCleaner
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Apple Development"
+        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_APP_SANDBOX: NO
+        COMBINE_HIDPI_IMAGES: YES
+  SlopCleanerTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [Tests]
+    dependencies:
+      - target: SlopCleaner
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.jaiashar.slopcleaner.tests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Apple Development"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Slop Cleaner.app/Contents/MacOS/Slop Cleaner"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+schemes:
+  SlopCleaner:
+    build:
+      targets:
+        SlopCleaner: all
+        SlopCleanerTests: [test]
+    test:
+      targets: [SlopCleanerTests]
