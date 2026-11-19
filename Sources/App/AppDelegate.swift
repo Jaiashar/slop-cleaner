@@ -83,8 +83,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self, let view = self.popover.contentViewController?.view.window?.contentView,
                   let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+            // The live popover's blurred backing isn't captured, so give the view a solid
+            // window-colored backing just for the capture (light or dark, whichever is on).
+            view.wantsLayer = true
+            let oldBG = view.layer?.backgroundColor
+            view.effectiveAppearance.performAsCurrentDrawingAppearance {
+                view.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            }
             view.cacheDisplay(in: view.bounds, to: rep)
-            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+            view.layer?.backgroundColor = oldBG
+            let out = rep
+            try? out.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
             // The menu bar icon too, at 4x, in light and dark.
             for (name, look) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
                 let stats = self.state.stats

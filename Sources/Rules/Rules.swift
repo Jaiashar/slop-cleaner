@@ -146,10 +146,12 @@ enum Rules {
                                   afterNote: "Shutting down keeps its apps and data.") { out.append(s) }
             case .devServer, .buildDaemon:
                 if let s = staleTool(t, c, src) { out.append(s) } else if let s = runaway(t, c, src) { out.append(s) }
-            case .app, .system:
+            case .app:
                 if let s = runaway(t, c, src) { out.append(s) }
+            case .system:
+                if let s = macOSJob(t, c) ?? runaway(t, c, src) { out.append(s) }
             case .process:
-                if let s = runaway(t, c, src) ?? leftover(t, c, src) { out.append(s) }
+                if let s = macOSJob(t, c) ?? runaway(t, c, src) ?? leftover(t, c, src) { out.append(s) }
             case .claudeSession, .testRun:
                 break
             }
@@ -296,6 +298,32 @@ enum Rules {
             if let url = ClaudeLinks.url(for: session) { s.itemLinks[row] = url }
         }
         return s
+    }
+
+    /// macOS's own background jobs that can run hot for a long time. Never stoppable, but worth explaining.
+    static let macOSJobs: [String: (name: String, what: String)] = [
+        "mediaanalysisd": ("Photos analysis", "macOS is analyzing your photo library (people, objects, text in images). It finishes on its own, fastest while your Mac is plugged in and idle."),
+        "photoanalysisd": ("Photos analysis", "macOS is analyzing your photo library. It finishes on its own, fastest while your Mac is plugged in and idle."),
+        "mds_stores": ("Spotlight indexing", "Spotlight is indexing files, often after lots of new files appear (builds, node_modules, downloads). Adding big build folders to System Settings → Spotlight → Search Privacy keeps it lighter."),
+        "mdworker_shared": ("Spotlight indexing", "Spotlight is reading new or changed files. It settles down once they're indexed."),
+        "mds": ("Spotlight indexing", "Spotlight is updating its index. It settles down on its own."),
+        "backupd": ("Time Machine", "A Time Machine backup is running. It finishes on its own."),
+        "softwareupdated": ("Software Update", "macOS is downloading or preparing an update."),
+        "kernel_task": ("Keeping your Mac cool", "macOS is holding back CPU to keep your Mac cool. Usually something else is running hot; see the list below."),
+        "XprotectService": ("Security scan", "macOS's built-in malware protection is scanning. It finishes on its own."),
+        "syspolicyd": ("Security checks", "macOS is checking newly opened or built apps. It settles down on its own."),
+    ]
+
+    private static func macOSJob(_ t: Thing, _ c: RuleContext) -> Suggestion? {
+        let name = t.root.name
+        guard let job = macOSJobs[name], t.cpu >= 50,
+              let avg = c.history.average(t.id, window: 30 * 60, now: c.now), avg >= 80 else { return nil }
+        return Suggestion(
+            id: "macos-job:\(name)", thingID: t.id, severity: .info, symbol: "apple.logo",
+            title: "\(job.name) has used \(Format.coresPhrase(avg)) for 30 min",
+            detail: "\(job.what) It's part of macOS (\(name)), so Slop Cleaner won't stop it.",
+            evidence: [Format.cores(avg), "macOS", "up \(Format.duration(c.now.timeIntervalSince(t.startedAt)))"],
+            action: .none, actionTitle: "", notify: false, ignoreLabel: job.name)
     }
 
     /// Agent tools left running after the session that started them ended (their parent is gone).

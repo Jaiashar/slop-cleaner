@@ -41,7 +41,7 @@ final class Engine: @unchecked Sendable {
     private let origins = OriginCache()
 
     func tick(thresholds: Thresholds, frontmostPID: Int32?, freshConnections: Bool = false, detail: Bool = false,
-              focusID: String? = nil, now: Date = Date()) -> Tick {
+              query: String = "", focusID: String? = nil, now: Date = Date()) -> Tick {
         tickCount += 1
         let procs = processes.sample(now: now)
         let stats = system.sample(processCount: procs.count)
@@ -78,7 +78,19 @@ final class Engine: @unchecked Sendable {
         // Always: everything Automate could close (so it keeps learning). Everything else only when needed.
         for t in c.things where AutoCategory.of(t) != nil { _ = src[t] }
         let suggestions = Rules.evaluate(ctx, src)
-        if detail { for t in c.things { _ = src[t] } }
+        if detail {
+            // Only what the popover can show: the top rows by CPU and by memory, plus search matches.
+            for t in c.things.sorted(by: { $0.cpu > $1.cpu }).prefix(40) { _ = src[t] }
+            for t in c.things.sorted(by: { $0.memory > $1.memory }).prefix(40) { _ = src[t] }
+            if !query.isEmpty {
+                for t in c.things where t.title.localizedCaseInsensitiveContains(query)
+                    || t.subtitle.localizedCaseInsensitiveContains(query)
+                    || t.listenPorts.contains(where: { String($0) == query })
+                    || t.processes.contains(where: { $0.name.localizedCaseInsensitiveContains(query) || String($0.pid) == query }) {
+                    _ = src[t]
+                }
+            }
+        }
         if let f = focusID, let t = c.things.first(where: { $0.id == f }) { _ = src[t] }
         let insights = src.cache
 

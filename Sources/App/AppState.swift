@@ -47,6 +47,9 @@ final class AppState: ObservableObject {
         notifier.onResponse = { [weak self] id, r in self?.handle(id: id, response: r) }
         notifier.setup()
         prefs.$sensitivity.dropFirst().sink { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }.store(in: &bag)
+        // Searching: fetch details for the matches right away instead of at the next tick.
+        $uiQuery.dropFirst().debounce(for: .milliseconds(250), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.refresh() }.store(in: &bag)
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) {
             [engine] _ in engine.queue.sync { engine.saveHistory() }
         }
@@ -68,8 +71,9 @@ final class AppState: ObservableObject {
         let thresholds = Thresholds.make(prefs.sensitivity)
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let detail = popoverVisible
+        let query = uiQuery
         engine.queue.async { [engine] in
-            let tick = engine.tick(thresholds: thresholds, frontmostPID: front, detail: detail)
+            let tick = engine.tick(thresholds: thresholds, frontmostPID: front, detail: detail, query: query)
             DispatchQueue.main.async { self.apply(tick) }
         }
     }

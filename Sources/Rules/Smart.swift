@@ -44,9 +44,10 @@ final class UsageMemory {
         guard let k = Self.key(for: t) else { return }
         var it = items[k] ?? Item()
         if let closed = it.closedAt {
-            // It's running again after Watcher closed it.
+            // It's running again after Slop Cleaner closed it. For a build daemon that's just the next
+            // build starting a fresh one, not you wanting the old one back, so it doesn't count.
             let back = now.timeIntervalSince(closed)
-            if back < Self.regretWindow {
+            if back < Self.regretWindow, !k.hasPrefix("daemon:") {
                 it.regrets += 1
                 it.gaps.append(Gap(at: now, seconds: back + (it.lastUse.map { closed.timeIntervalSince($0) } ?? 0)))
             }
@@ -143,6 +144,7 @@ final class UsageMemory {
     func load(from url: URL, now: Date = Date()) {
         guard let data = try? Data(contentsOf: url), let s = try? JSONDecoder().decode(Saved.self, from: data) else { return }
         items = s.items
+        for k in items.keys where k.hasPrefix("daemon:") { items[k]?.regrets = 0 }   // never real regrets (see observe)
         if now.timeIntervalSince(s.savedAt) > 10 * 60 {
             for k in items.keys { items[k]?.lastUse = nil }
         }

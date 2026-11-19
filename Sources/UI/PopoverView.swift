@@ -225,14 +225,24 @@ struct StatPill: View {
 struct AllQuietView: View {
     @EnvironmentObject var state: AppState
 
+    /// Busy but nothing to clean: everything using the Mac is in use. Name the top two so it's clear why.
+    private var busyBecause: String? {
+        guard state.stats.cpuFraction >= 0.7 else { return nil }
+        let top = state.things.sorted { $0.cpu > $1.cpu }.prefix(2).map { "\($0.title) (\(Format.cores($0.cpu)))" }
+        return top.isEmpty ? nil : "Mostly " + top.joined(separator: " and ") + ", all in use."
+    }
+
     var body: some View {
+        let busy = busyBecause
         HStack(spacing: 12) {
-            Image(systemName: "sparkles")
+            Image(systemName: busy == nil ? "sparkles" : "gauge.with.dots.needle.67percent")
                 .font(.system(size: 24))
-                .foregroundStyle(.green)
+                .foregroundStyle(busy == nil ? Color.green : Color.orange)
             VStack(alignment: .leading, spacing: 2) {
-                Text("All clean").font(.headline)
-                if let p = state.peak {
+                Text(busy == nil ? "All clean" : "Busy, but nothing to clean").font(.headline)
+                if let busy {
+                    Text(busy).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                } else if let p = state.peak {
                     Text("Busiest today: \(Int(p.cpu * 100))% at \(p.at.formatted(date: .omitted, time: .shortened))")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
@@ -243,7 +253,8 @@ struct AllQuietView: View {
             Spacer()
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.green.opacity(0.08)))
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill((busy == nil ? Color.green : Color.orange).opacity(0.08)))
     }
 }
 

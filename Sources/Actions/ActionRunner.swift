@@ -43,9 +43,11 @@ enum ActionRunner {
                                                : "adb couldn't stop \(serial): \(r?.output.trimmed ?? "no answer")")
 
         case .shutdownSimulator(let udid):
-            let r = Shell.run("/usr/bin/xcrun", ["simctl", "shutdown", udid], timeout: 60)
-            let ok = r?.status == 0
-            return Outcome(ok: ok, message: ok ? "Shut down \(label)." : "simctl couldn't shut it down: \(r?.output.trimmed ?? "no answer")")
+            // A busy Mac can take a while; and what counts is the simulator's state afterwards, not simctl's exit code.
+            let r = Shell.run("/usr/bin/xcrun", ["simctl", "shutdown", udid], timeout: 180)
+            if simulatorState(udid) == "Shutdown" { return Outcome(ok: true, message: "Shut down \(label).") }
+            let why = r.map { $0.output.trimmed.isEmpty ? "exit code \($0.status)" : $0.output.trimmed } ?? "simctl didn't start"
+            return Outcome(ok: false, message: "simctl couldn't shut \(label) down (\(why)).")
 
         case .terminate(let pid, let start):
             return terminate(pid: pid, start: start, label: label, politeApp: false)
@@ -107,8 +109,20 @@ enum ActionRunner {
         guard kill(pid, SIGTERM) == 0 else {
             return Outcome(ok: false, message: "macOS didn't let Slop Cleaner stop \(label) (\(String(cString: strerror(errno)))).")
         }
-        if waitForExit(pid, start: start, seconds: 5) { return Outcome(ok: true, message: "Stopped \(label).") }
+        // Give it time to save and exit (a Claude session can take several seconds on a busy Mac).
+        if waitForExit(pid, start: start, seconds: 20) { return Outcome(ok: true, message: "Stopped \(label).") }
         return Outcome(ok: false, message: "Asked \(label) to stop, but it's still running. It may be stuck; Activity Monitor can force-quit it.")
+    }
+
+    /// "Booted", "Shutdown", "Shutting Down"… from simctl, or nil if unknown.
+    static func simulatorState(_ udid: String) -> String? {
+        guard let out = Shell.run("/usr/bin/xcrun", ["simctl", "list", "-j", "devices"], timeout: 20)?.output,
+              let json = try? JSONSerialization.jsonObject(with: Data(out.utf8)) as? [String: Any],
+              let devices = json["devices"] as? [String: [[String: Any]]] else { return nil }
+        for list in devices.values {
+            if let d = list.first(where: { ($0["udid"] as? String)?.uppercased() == udid.uppercased() }) { return d["state"] as? String }
+        }
+        return nil
     }
 
     private static func waitForExit(_ pid: Int32, start: Date, seconds: Double) -> Bool {

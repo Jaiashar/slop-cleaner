@@ -143,3 +143,34 @@ final class RulesTests: XCTestCase {
         XCTAssertFalse(q.contains(at(14), calendar: cal))
     }
 }
+
+final class MacOSJobsAndHabitsTests: XCTestCase {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    func testBusyMacOSJobIsExplainedNeverStopped() {
+        let p = ProcessSnapshot(pid: 4116, ppid: 1, uid: getuid(), name: "mediaanalysisd",
+                                path: "/System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+                                args: [], cwd: nil, startTime: now.addingTimeInterval(-3 * 86400), cpu: 120, memory: 1 << 30)
+        let t = Classifier.classify([p]).things[0]
+        let h = History()
+        h.seed(id: t.id, cpu: 120, minutes: 31, endingAt: now)
+        let c = RuleContext(things: [t], stats: SystemStats(), history: h, now: now, thresholds: .make(.normal),
+                            driven: [], locks: { _ in nil }, frontmostPID: nil, selfPID: 99999)
+        let s = Rules.evaluate(c)
+        XCTAssertEqual(s.map(\.id), ["macos-job:mediaanalysisd"])
+        XCTAssertEqual(s[0].action, SuggestedAction.none, "explained, never stoppable")
+        XCTAssertFalse(s[0].notify)
+    }
+
+    func testNewGradleDaemonIsNotARegret() {
+        let p = ProcessSnapshot(pid: 900, ppid: 1, uid: getuid(), name: "java", path: "/usr/bin/java",
+                                args: ["java", "org.gradle.launcher.daemon.bootstrap.GradleDaemon"], cwd: nil,
+                                startTime: now, cpu: 0, memory: 1 << 30)
+        let t = Classifier.classify([p]).things[0]
+        let m = UsageMemory()
+        let before = m.pick(for: t, recentCPU: 0, now: now).seconds
+        m.markClosed(t, now: now)
+        m.observe(t, inUseNow: false, now: now.addingTimeInterval(600))   // the next build started a new one
+        XCTAssertEqual(m.pick(for: t, recentCPU: 0, now: now).seconds, before)
+    }
+}
