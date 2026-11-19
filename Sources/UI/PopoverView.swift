@@ -27,10 +27,11 @@ struct PopoverView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if state.tab == .now {
+                        if state.uiQuery.isEmpty { WhyBusyView() }
                         if !state.uiQuery.isEmpty {
                             EmptyView()   // searching: just the results
                         } else if state.suggestions.isEmpty {
-                            AllQuietView()
+                            if !state.showsWhyBusy { AllQuietView() }
                         } else {
                             SuggestionsHeader()
                             VStack(spacing: 10) {
@@ -314,5 +315,53 @@ struct Sparkline: View {
                                                  startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
             ctx.stroke(line, with: .color(color), style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
         }
+    }
+}
+
+/// "What's keeping your Mac busy": shown when it's warm or working hard, so loud fans always have an answer,
+/// even when nothing is safe to clean.
+struct WhyBusyView: View {
+    @EnvironmentObject var state: AppState
+
+    var body: some View {
+        let s = state.stats
+        let warm = s.thermal != .nominal
+        if state.showsWhyBusy, !state.things.isEmpty {
+            let rows = HeatSource.breakdown(state.things) { t in
+                let series = state.thingSeries[t.id] ?? []
+                return series.count >= 3 ? series.suffix(12).reduce(0, +) / Double(min(12, series.count)) : t.cpu
+            }
+            let throttling = state.things.contains { $0.root.name == "kernel_task" && $0.cpu >= 15 }
+            VStack(alignment: .leading, spacing: 8) {
+                SectionTitle(warm ? "Why your Mac is warm" : "What's keeping your Mac busy")
+                ForEach(rows) { r in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Image(systemName: r.source.symbol).frame(width: 16).foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(r.source.title).font(.callout.weight(.medium))
+                            Text(r.top.isEmpty ? r.source.note : r.top.joined(separator: " · "))
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        }
+                        Spacer()
+                        Text(Format.cores(r.cpu)).font(.callout).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                }
+                Text(footnote(rows: rows, throttling: throttling))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.orange.opacity(0.08)))
+        }
+    }
+
+    private func footnote(rows: [HeatSource.Row], throttling: Bool) -> String {
+        var parts: [String] = []
+        if state.suggestions.isEmpty {
+            parts.append("None of it is safe to clean right now: it's all in use or part of macOS. Fans calm down as the work finishes.")
+        } else {
+            parts.append("The cards below are what's safe to clean; the rest is in use or part of macOS.")
+        }
+        if throttling { parts.append("macOS is slowing things a little to cool down (kernel_task).") }
+        return parts.joined(separator: " ")
     }
 }

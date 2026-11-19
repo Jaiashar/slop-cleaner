@@ -174,3 +174,29 @@ final class MacOSJobsAndHabitsTests: XCTestCase {
         XCTAssertEqual(m.pick(for: t, recentCPU: 0, now: now).seconds, before)
     }
 }
+
+final class HeatSourceTests: XCTestCase {
+    func thing(_ kind: ThingKind, _ name: String, _ path: String, cpu: Double, owner: String? = nil, origin: String? = nil) -> Thing {
+        let p = ProcessSnapshot(pid: Int32.random(in: 1000...9000), ppid: 1, uid: getuid(), name: name, path: path, args: [], cwd: nil,
+                                startTime: Date(), cpu: cpu, memory: 1 << 30)
+        var t = Thing(id: UUID().uuidString, kind: kind, title: name, subtitle: "", processes: [p])
+        t.ownerID = owner
+        t.origin = origin
+        return t
+    }
+
+    func testLoadIsGroupedBySource() {
+        let things = [
+            thing(.buildDaemon, "Kotlin daemon", "/opt/java", cpu: 123),
+            thing(.process, "mediaanalysisd", "/System/Library/PrivateFrameworks/MediaAnalysis.framework/mediaanalysisd", cpu: 122),
+            thing(.process, "Python", "/opt/homebrew/bin/python3", cpu: 59, owner: "claude:1"),
+            thing(.system, "WindowServer", "/System/Library/WindowServer", cpu: 51),
+            thing(.app(bundlePath: "/Applications/Claude.app"), "Claude", "/Applications/Claude.app/Contents/MacOS/Claude", cpu: 40),
+        ]
+        let rows = HeatSource.breakdown(things) { $0.cpu }
+        XCTAssertEqual(rows.map { $0.source }, [HeatSource.work, HeatSource.macOS, HeatSource.apps])
+        XCTAssertEqual(rows[0].cpu, 182, accuracy: 0.1)
+        XCTAssertEqual(rows[0].top.first, "Kotlin daemon 1.2 cores")
+        XCTAssertEqual(rows[1].top.first, "Photos analysis 1.2 cores", "macOS jobs get their plain name")
+    }
+}

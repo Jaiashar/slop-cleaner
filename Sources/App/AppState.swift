@@ -465,6 +465,9 @@ final class AppState: ObservableObject {
         flash("Slop Cleaner forgot what it learned. Smart times start fresh.")
     }
 
+    /// Warm, or a quarter of the CPU busy: explain where the load comes from.
+    var showsWhyBusy: Bool { stats.thermal != .nominal || stats.cpuFraction >= 0.25 }
+
     /// What following every suggestion would free.
     var potentialSavings: (cpu: Double, memory: UInt64) {
         guard let tick = latest else { return (0, 0) }

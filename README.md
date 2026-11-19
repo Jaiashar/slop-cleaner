@@ -29,6 +29,7 @@ When you work with AI coding agents, a lot gets left behind: an Android emulator
 - **Sweep**: one button cleans everything on the list that's safe right now. It never includes your apps.
 - **Automate**: optionally close things after they've gone *unused* (not just open) for a while, with a 5-minute heads-up and a "Keep it running" button.
 - **Smart timing**: instead of one fixed number, it learns how you use each item (your usual breaks with it) and gives more time to anything you brought back after it was closed. What it learns stays on your Mac.
+- **Answers "why are my fans loud?"**: when your Mac is warm or busy, it shows where the load comes from (work in progress like builds and agent sessions, macOS's own background jobs like Spotlight and Photos analysis, your apps), even when nothing is safe to clean.
 - **Flags apps that don't close**: if an app is asked to quit and stays open (usually it's asking about unsaved work), it shows up on the list with a "Show it" button.
 
 ## Your apps are yours
