@@ -35,6 +35,35 @@ final class SmartTests: XCTestCase {
         XCTAssertEqual(pick.reason, "Your breaks with it are usually under 1 h 20 min")
     }
 
+    /// Real case (11/22): a QA emulator's learned breaks (33 h, 41 h) came from stretches it sat unused at
+    /// 4-7 cores, so Smart waited 24 h. What it costs while it waits caps the wait.
+    func testCostCapsALearnedWait() {
+        let m = UsageMemory()
+        let t = emulator(mem: 6 << 30)
+        var now = t0
+        m.observe(t, inUseNow: true, now: now)
+        for gap in [38.0, 47, 2002, 770, 30, 231, 2478, 481] {
+            now.addTimeInterval(gap * 60)
+            m.observe(t, inUseNow: true, now: now)
+        }
+        let hot = m.pick(for: t, recentCPU: 730, now: now)
+        XCTAssertTrue(hot.learned)
+        XCTAssertEqual(hot.seconds, 2 * 3600)
+        XCTAssertEqual(hot.reason, "Your breaks with it are usually under 41 h, but it uses 7.3 cores while it waits, so 2 h at most")
+        XCTAssertEqual(m.pick(for: t, recentCPU: 4, now: now).seconds, 8 * 3600, "idle on a still screen but holding 6 GB")
+        m.markKept(t)
+        XCTAssertEqual(m.pick(for: t, recentCPU: 730, now: now).seconds, 3 * 3600, "keep it running still buys more time")
+    }
+
+    func testCheapItemKeepsItsLearnedWait() {
+        let m = UsageMemory()
+        let t = emulator(mem: 200 << 20)
+        var now = t0
+        m.observe(t, inUseNow: true, now: now)
+        for gap in [600.0, 700, 800] { now.addTimeInterval(gap * 60); m.observe(t, inUseNow: true, now: now) }
+        XCTAssertEqual(m.pick(for: t, recentCPU: 2, now: now).seconds, 60300, "800 min x1.25 = 16 h 40 min, in 15-min steps; light, so no cap")
+    }
+
     func testShortPausesAreNotBreaks() {
         let m = UsageMemory()
         let t = emulator()

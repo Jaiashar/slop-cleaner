@@ -61,7 +61,7 @@ final class Engine: @unchecked Sendable {
             listenByPid = found.listen
             clientsByPid = found.clients
         }
-        attachConnections(&c.things, procs: procs)
+        Engine.attachConnections(&c.things, procs: procs, listen: listenByPid, clients: clientsByPid)
 
         history.record(things: c.things, systemCPU: stats.cpuFraction, driven: c.driven, frontmostPID: frontmostPID, at: now)
         if tickCount % 12 == 0 { saveHistory(now: now) }
@@ -113,22 +113,28 @@ final class Engine: @unchecked Sendable {
     func forgetHabits() { usage.forget(); saveHistory() }
 
     /// Fills in each thing's listening ports and who is connected to it, by name.
-    private func attachConnections(_ things: inout [Thing], procs: [ProcessSnapshot]) {
+    static func attachConnections(_ things: inout [Thing], procs: [ProcessSnapshot], listen: [Int32: [UInt16]],
+                                  clients: [Int32: [SocketScanner.Client]], selfPID: Int32 = getpid()) {
         var thingOf: [Int32: Int] = [:]
         for (i, t) in things.enumerated() { for p in t.processes { thingOf[p.pid] = i } }
         let byPid = Dictionary(procs.map { ($0.pid, $0) }, uniquingKeysWith: { a, _ in a })
 
         for (i, t) in things.enumerated() {
+            let isEmulator: Bool = { if case .androidEmulator = t.kind { return true }; return false }()
             var ports = Set<UInt16>()
             var labels: [String] = []
             for p in t.processes {
-                ports.formUnion(listenByPid[p.pid] ?? [])
-                for client in clientsByPid[p.pid] ?? [] {
+                ports.formUnion(listen[p.pid] ?? [])
+                for client in clients[p.pid] ?? [] {
                     if let cp = client.pid {
                         guard let ci = thingOf[cp], ci != i else { continue }   // talking to itself
+                        // adb's background server stays connected to every running emulator for as long as
+                        // it runs. That connection is plumbing, not someone using it; real use shows up as
+                        // an adb command, Maestro or a test run driving it (see Classifier.drivenDevices).
+                        if isEmulator, let q = byPid[cp], Classifier.isAdbServer(q) { continue }
                         let owner = things[ci]
                         let name = byPid[cp]?.name ?? "pid \(cp)"
-                        if owner.processes.contains(where: { $0.pid == getpid() }) { continue }
+                        if owner.processes.contains(where: { $0.pid == selfPID }) { continue }
                         switch owner.kind {
                         case .app: labels.append(owner.title)
                         case .iosSimulator, .androidEmulator, .claudeSession:

@@ -81,7 +81,10 @@ final class UsageMemory {
 
     /// - Enough history (3+ breaks): a little longer than 9 in 10 of your breaks with it.
     /// - Not yet: by cost. Something burning cores gets 1 h, a light one 6 h.
-    /// - Each regret or keep makes it 1.5x longer (up to 4x). Always between 30 min and 24 h.
+    /// - Either way, what it costs while it waits caps the wait: 2 h for something burning a core or more,
+    ///   8 h for one holding 4 GB or a fifth of a core. Long breaks were often learned while it sat there
+    ///   burning cores, and starting it again costs far less than a day of that.
+    /// - Each regret or keep makes it 1.5x longer (up to 4x), after the cap. Always between 30 min and 24 h.
     func pick(for t: Thing, recentCPU: Double, now: Date = Date()) -> Pick {
         let it = Self.key(for: t).flatMap { items[$0] } ?? Item()
         let gaps = it.gaps.filter { now.timeIntervalSince($0.at) < Self.keepDays }.map(\.seconds).sorted()
@@ -122,6 +125,12 @@ final class UsageMemory {
             reason = "Still learning your habits. It's light, so it can wait"
         }
 
+        if let cap = Self.costCap(recentCPU: recentCPU, memory: t.memory), base > cap {
+            base = cap
+            let cost = recentCPU >= 20 ? "uses \(Format.cores(recentCPU))" : "holds \(Format.bytes(t.memory))"
+            reason += ", but it \(cost) while it waits, so \(Format.duration(cap)) at most"
+        }
+
         let pushback = it.regrets + it.keeps
         if pushback > 0 {
             base *= min(4, pow(1.5, Double(pushback)))
@@ -129,6 +138,13 @@ final class UsageMemory {
         }
         let rounded = (min(24 * 3600, max(30 * 60, base)) / 900).rounded(.up) * 900   // nice 15-min steps
         return Pick(seconds: rounded, reason: reason, learned: learned)
+    }
+
+    /// The longest an item may sit unused, by what it costs while it does. nil = no cap beyond 24 h.
+    static func costCap(recentCPU: Double, memory: UInt64) -> TimeInterval? {
+        if recentCPU >= 100 { return 2 * 3600 }
+        if recentCPU >= 20 || memory >= 4 * 1_073_741_824 { return 8 * 3600 }
+        return nil
     }
 
     // MARK: - Saving

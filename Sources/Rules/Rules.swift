@@ -180,14 +180,16 @@ enum Rules {
         guard hot || longIdle else { return nil }
 
         let kindWord = key.hasPrefix("emulator-") ? "emulator" : "simulator"
+        // Busy right now but not yet watched long enough to call it steady (e.g. just after a restart).
+        let busyNow = !hot && t.cpu >= cpuLimit
         let title = hot ? "\(t.title) is using \(Format.coresPhrase(avg ?? t.cpu))"
                         : "\(t.title) has been on for \(Format.duration(uptime))"
         let used = i.usage.text.capitalizedFirst
-        let detail = hot ? "Running \(Format.duration(uptime)). \(used). \(afterNote)"
-                         : "It isn't using much CPU, but it's holding \(Format.bytes(t.memory)). \(used). \(afterNote)"
+        let detail = hot || busyNow ? "Running \(Format.duration(uptime)). \(used). \(afterNote)"
+                                    : "It isn't using much CPU, but it's holding \(Format.bytes(t.memory)). \(used). \(afterNote)"
         var s = Suggestion(
             id: "idle-\(kindWord):\(idPart)", thingID: t.id,
-            severity: hot ? ((avg ?? 0) >= 400 ? .urgent : .suggest) : .info,
+            severity: hot ? ((avg ?? 0) >= 400 ? .urgent : .suggest) : busyNow ? .suggest : .info,
             symbol: t.symbol, title: title, detail: detail,
             evidence: [Format.cores(avg ?? t.cpu), Format.bytes(t.memory), "up \(Format.duration(uptime))", "nobody driving"],
             action: i.safety.action, actionTitle: "Shut down", notify: hot,
@@ -331,7 +333,8 @@ enum Rules {
         let age = c.now.timeIntervalSince(t.startedAt)
         guard t.root.ppid == 1, t.root.uid >= 500, age >= 3600, t.cpu < 5, !t.root.args.isEmpty else { return nil }
         let a = t.root.args.joined(separator: " ").lowercased()
-        let markers = ["mcp", "playwright", "puppeteer", "--headless", "chrome-headless-shell", "chromedriver", "--remote-debugging-port"]
+        let markers = ["mcp", "playwright", "puppeteer", "--headless", "chrome-headless-shell", "chromedriver", "--remote-debugging-port",
+                       "idb_companion"]
         guard markers.contains(where: { a.contains($0) }),
               let avg = c.history.average(t.id, window: 10 * 60, now: c.now), avg < 2 else { return nil }
         let i = src[t]

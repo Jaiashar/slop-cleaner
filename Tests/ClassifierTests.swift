@@ -97,6 +97,53 @@ final class ClassifierTests: XCTestCase {
         XCTAssertEqual(Classifier.drivenDevices(procs), ["emulator-5556", "8F1C2D3E-4A5B-4C6D-8E7F-901234567890"])
     }
 
+    func testPlainAdbCommandsCountForEveryEmulator() {
+        let adb = "/sdk/platform-tools/adb"
+        XCTAssertEqual(Classifier.drivenDevices([proc(1, "adb", path: adb, args: ["adb", "shell", "input", "tap", "1", "2"])]), ["*android"])
+        XCTAssertEqual(Classifier.drivenDevices([proc(1, "adb", path: adb, args: ["adb", "-e", "logcat"])]), ["*android"])
+        XCTAssertEqual(Classifier.drivenDevices([proc(1, "adb", path: adb, args: ["adb", "start-server"])]), [])
+        XCTAssertEqual(Classifier.drivenDevices([proc(1, "adb", path: adb, args: ["adb", "kill-server"])]), [])
+        XCTAssertTrue(Classifier.isAdbServer(proc(1, "adb", path: adb, args: ["adb", "-L", "tcp:5037", "fork-server", "server", "--reply-fd", "4"])))
+        XCTAssertFalse(Classifier.isAdbServer(proc(1, "adb", path: adb, args: ["adb", "-s", "emulator-5554", "shell", "echo", "server"])),
+                       "an argument after the command isn't the server")
+    }
+
+    func testEmulatorKnowsWhoStartedIt() {
+        let procs = [
+            proc(10, "AgentApp", path: "/Applications/AgentApp.app/Contents/MacOS/AgentApp"),
+            proc(11, "agent", ppid: 10, path: "/Applications/AgentApp.app/Contents/Resources/cli/Agent.app/Contents/MacOS/agent"),
+            proc(12, "qemu-system-aarch64-headless", ppid: 11, path: "/sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64-headless",
+                 args: ["qemu-system-aarch64-headless", "-avd", "QA_Phone", "-port", "5630", "-no-window"]),
+        ]
+        let emu = Classifier.classify(procs, home: home).things.first { $0.id == "emu:emulator-5630" }!
+        XCTAssertEqual(emu.origin, "Started by AgentApp")
+        let i = Insights.safety(emu, RuleContext(things: [emu], stats: SystemStats(), history: History(), now: now,
+                                                 thresholds: .make(.normal), driven: [], locks: { _ in nil },
+                                                 frontmostPID: nil, selfPID: 99999), byID: [:])
+        XCTAssertNotEqual(i.verdict, .blocked, "who started a device is a note, never a block")
+        XCTAssertTrue(i.notes.contains("Started by AgentApp."))
+    }
+
+    func testSimulatorPanelWatcherAndIdleCompanionAreNotDriving() {
+        let udid = "8F1C2D3E-4A5B-4C6D-8E7F-901234567890"
+        let other = "1A2B3C4D-5E6F-4A1B-8C2D-3E4F5A6B7C8D"
+        let procs = [
+            proc(10, "Claude", path: "/Applications/Claude.app/Contents/MacOS/Claude"),
+            proc(11, "simctl", ppid: 10, path: "/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl",
+                 args: ["simctl", "spawn", udid, "notifyutil", "-v", "-w", "com.apple.backboardd.orientation"]),
+            proc(12, "idb_companion", path: "/opt/homebrew/bin/idb_companion",
+                 args: ["idb_companion", "--udid", other, "--only", "simulator"], cpu: 0),
+        ]
+        let c = Classifier.classify(procs, home: home)
+        XCTAssertTrue(c.driven.isEmpty, "\(c.driven)")
+        XCTAssertEqual(Classifier.attachedViewers(procs)[udid], "the Claude app's simulator panel")
+        let busy = proc(13, "idb_companion", path: "/opt/homebrew/bin/idb_companion",
+                        args: ["idb_companion", "--udid", other, "--only", "simulator"], cpu: 40)
+        XCTAssertEqual(Classifier.drivenDevices([busy]), [other], "a companion serving requests counts")
+        XCTAssertEqual(Classifier.drivenDevices([proc(14, "simctl", args: ["simctl", "spawn", udid, "launchctl", "list"])]), [udid],
+                       "other spawns still count as driving")
+    }
+
     func testFolderLabels() {
         XCTAssertEqual(Classifier.folderLabel("/Users/x/projects/myapp/.worktrees/feature-x/backend", home: home), "feature-x worktree")
         XCTAssertEqual(Classifier.folderLabel("/Users/x/projects", home: home), "~/projects")

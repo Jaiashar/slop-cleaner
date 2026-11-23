@@ -70,6 +70,75 @@ final class RulesTests: XCTestCase {
         XCTAssertNil(Rules.evaluate(context([t], history: h, lock: lock))[0].blockedNote)
     }
 
+    /// Real case (11/22): an emulator idled 14 h at ~7 cores and was never suggested, because adb's background
+    /// server (always connected to every emulator) counted as "someone connected to it right now".
+    func emulatorWithConnections(extraClient: ProcessSnapshot? = nil) -> Thing {
+        let q = proc(41399, "qemu-system-aarch64-headless",
+                     args: ["qemu-system-aarch64-headless", "-avd", "Pixel_8_API_35", "-port", "5554", "-no-window"],
+                     cpu: 730, mem: 6 << 30, ageHours: 14)
+        let adbServer = proc(13024, "adb", path: "/sdk/platform-tools/adb",
+                             args: ["adb", "-L", "tcp:5037", "fork-server", "server", "--reply-fd", "4"], ageHours: 300)
+        var procs = [q, adbServer]
+        if let e = extraClient { procs.append(e) }
+        var things = Classifier.classify(procs).things
+        typealias S = SocketScanner.Socket
+        var sockets = [
+            S(pid: 41399, localPort: 5555, remotePort: 0, listening: true, established: false, remoteAddress: "127.0.0.1"),
+            S(pid: 41399, localPort: 5555, remotePort: 58314, listening: false, established: true, remoteAddress: "127.0.0.1"),
+            S(pid: 13024, localPort: 58314, remotePort: 5555, listening: false, established: true, remoteAddress: "127.0.0.1"),
+        ]
+        if let e = extraClient {
+            sockets += [
+                S(pid: 41399, localPort: 8554, remotePort: 0, listening: true, established: false, remoteAddress: "::1"),
+                S(pid: 41399, localPort: 8554, remotePort: 60001, listening: false, established: true, remoteAddress: "::1"),
+                S(pid: e.pid, localPort: 60001, remotePort: 8554, listening: false, established: true, remoteAddress: "::1"),
+            ]
+        }
+        let found = SocketScanner.clients(of: sockets)
+        Engine.attachConnections(&things, procs: procs, listen: found.listen, clients: found.clients, selfPID: 99999)
+        return things.first { $0.id == "emu:emulator-5554" }!
+    }
+
+    func testAdbServerConnectionIsNotUse() {
+        let t = emulatorWithConnections()
+        XCTAssertEqual(t.clients, [], "adb's server is plumbing, not a user")
+        XCTAssertEqual(t.listenPorts, [5555])
+        let h = History()
+        h.seed(id: t.id, cpu: 730, minutes: 11, endingAt: now)
+        h.markDriven("emulator-5554", at: now.addingTimeInterval(-6 * 3600))
+        let c = context([t], history: h)
+        let s = Rules.evaluate(c)
+        XCTAssertEqual(s.map(\.id), ["idle-emulator:Pixel_8_API_35"])
+        XCTAssertEqual(s[0].action, .stopEmulator(serial: "emulator-5554"))
+        let i = Rules.insights(c)[t.id]!
+        XCTAssertEqual(i.safety.verdict, .safe, i.safety.reasons.joined(separator: " "))
+        XCTAssertTrue(Automation.eligible(i, idleLimit: 2 * 3600), "6 h undriven, past a 2 h limit")
+    }
+
+    func testARealClientStillBlocksAnEmulator() {
+        // Android Studio's Running Devices panel streams the screen over the emulator's gRPC port.
+        let studio = proc(7001, "studio", path: "/Applications/Android Studio.app/Contents/MacOS/studio", ageHours: 5)
+        let t = emulatorWithConnections(extraClient: studio)
+        XCTAssertEqual(t.clients, ["Android Studio"])
+        let h = History()
+        h.seed(id: t.id, cpu: 730, minutes: 11, endingAt: now)
+        let c = context([t], history: h)
+        XCTAssertTrue(Rules.evaluate(c).isEmpty)
+        XCTAssertEqual(Rules.insights(c)[t.id]!.safety.verdict, .blocked)
+    }
+
+    func testBusyEmulatorRightAfterARestartIsNotCalledIdle() {
+        let t = emulatorWithConnections()          // 7.3 cores right now, up 14 h
+        let h = History()
+        h.seed(id: t.id, cpu: 730, minutes: 1, endingAt: now)   // Slop Cleaner restarted a minute ago
+        h.markDriven("emulator-5554", at: now.addingTimeInterval(-6 * 3600))
+        let s = Rules.evaluate(context([t], history: h))
+        XCTAssertEqual(s.count, 1)
+        XCTAssertFalse(s[0].detail.contains("isn't using much CPU"), s[0].detail)
+        XCTAssertTrue(s[0].detail.hasPrefix("Running ") && s[0].detail.contains(". Last driven 6 h ago."), s[0].detail)
+        XCTAssertEqual(s[0].severity, .suggest)
+    }
+
     func testNotEnoughHistoryMeansNoVerdict() {
         let t = emulator(ageHours: 1)
         let h = History()
@@ -183,6 +252,27 @@ final class HeatSourceTests: XCTestCase {
         t.ownerID = owner
         t.origin = origin
         return t
+    }
+
+    func testIdleDeviceIsLeftRunningNotWork() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let q = ProcessSnapshot(pid: 41399, ppid: 1, uid: 501, name: "qemu-system-aarch64-headless", path: "/sdk/qemu",
+                                args: ["qemu", "-avd", "Pixel_8_API_35", "-port", "5554"], cwd: nil,
+                                startTime: now.addingTimeInterval(-14 * 3600), cpu: 730, memory: 6 << 30)
+        let emu = Classifier.classify([q]).things[0]
+        let daemon = thing(.buildDaemon, "Kotlin daemon", "/opt/java", cpu: 123)
+        let h = History()
+        h.seed(id: emu.id, cpu: 730, minutes: 11, endingAt: now)
+        func rows(drivenAgo: TimeInterval) -> [HeatSource.Row] {
+            h.markDriven("emulator-5554", at: now.addingTimeInterval(-drivenAgo))
+            let c = RuleContext(things: [emu, daemon], stats: SystemStats(), history: h, now: now, thresholds: .make(.normal),
+                                driven: [], locks: { _ in nil }, frontmostPID: nil, selfPID: 99999)
+            return HeatSource.breakdown([emu, daemon], insights: Rules.insights(c)) { $0.cpu }
+        }
+        let idle = rows(drivenAgo: 6 * 3600)
+        XCTAssertEqual(idle.map(\.source), [.leftOn, .work])
+        XCTAssertEqual(idle[0].top, ["Pixel 8 API 35 emulator 7.3 cores"])
+        XCTAssertEqual(rows(drivenAgo: 60).map(\.source), [.work], "driven a minute ago: still work in progress")
     }
 
     func testLoadIsGroupedBySource() {

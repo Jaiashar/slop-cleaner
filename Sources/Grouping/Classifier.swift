@@ -147,7 +147,7 @@ enum Classifier {
         for id in order {
             guard var t = things[id], t.ownerLabel == nil else { continue }
             switch t.kind {
-            case .devServer, .testRun, .buildDaemon, .process:
+            case .devServer, .testRun, .buildDaemon, .process, .androidEmulator:
                 if let cache = origins {
                     t.origin = cache.value(for: t.root.key) { origin(of: t.root, byPid: byPid, owner: owner, things: things) }
                 } else {
@@ -252,7 +252,7 @@ enum Classifier {
         var out: [String: String] = [:]
         for p in procs where p.name == "simctl" {
             let joined = p.args.joined(separator: " ")
-            guard joined.contains("log stream") || joined.contains(" io "), let u = firstUUID(in: joined) else { continue }
+            guard isViewer(simctlArgs: joined), let u = firstUUID(in: joined) else { continue }
             var viewer = "a log viewer"
             var cur = byPid[p.ppid]
             var hops = 0
@@ -273,10 +273,17 @@ enum Classifier {
             let joined = p.args.joined(separator: " ")
             switch exe {
             case "adb":
-                if !joined.contains("server"), let s = value(after: "-s", in: p.args) { d.insert(s) }
-            case "xcodebuild", "simctl", "idb", "idb_companion":
-                if exe == "simctl" && (joined.contains("log stream") || joined.contains(" io ")) { break }
+                if isAdbServer(p) { break }
+                // `adb -s <serial> …` drives that one; plain `adb shell`, `adb -e` or ANDROID_SERIAL could be
+                // any emulator, so it counts for all of them (never close one mid-command).
+                d.insert(value(after: "-s", in: p.args) ?? "*android")
+            case "xcodebuild", "simctl", "idb":
+                if exe == "simctl" && isViewer(simctlArgs: joined) { break }
                 if let u = firstUUID(in: joined) { d.insert(u) }
+            case "idb_companion":
+                // idb's companion is a server that stays up (often orphaned) long after the last command.
+                // It only counts while it's actually serving something.
+                if p.cpu >= 5, let u = firstUUID(in: joined) { d.insert(u) }
             case "java", "maestro":
                 let lower = joined.lowercased()
                 if lower.contains("maestro") {
@@ -295,6 +302,24 @@ enum Classifier {
     }
 
     // MARK: - Small parsers
+
+    /// simctl watching a simulator without driving it: streaming its log or screen, or waiting on
+    /// notifications (the Claude app's simulator panel runs `simctl spawn <udid> notifyutil -w …`).
+    static func isViewer(simctlArgs a: String) -> Bool {
+        a.contains("log stream") || a.contains(" io ") || (a.contains(" spawn ") && a.contains("notifyutil") && a.contains(" -w "))
+    }
+
+    /// adb's background server (`adb fork-server server`, `adb start-server`...), not a command someone ran.
+    /// It keeps a connection open to every running emulator, so it never means anyone is using one.
+    static func isAdbServer(_ p: ProcessSnapshot) -> Bool {
+        guard p.name == "adb" else { return false }
+        // The command is the first word after adb's own options (-s/-t/-H/-P/-L take a value).
+        let withValue: Set<String> = ["-s", "-t", "-H", "-P", "-L", "--one-device"]
+        var i = 1
+        while i < p.args.count, p.args[i].hasPrefix("-") { i += withValue.contains(p.args[i]) ? 2 : 1 }
+        guard i < p.args.count else { return false }
+        return ["server", "fork-server", "start-server", "kill-server", "nodaemon"].contains(p.args[i])
+    }
 
     static func value(after flag: String, in args: [String]) -> String? {
         guard let i = args.firstIndex(of: flag), i + 1 < args.count else { return nil }

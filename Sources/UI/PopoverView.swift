@@ -327,7 +327,7 @@ struct WhyBusyView: View {
         let s = state.stats
         let warm = s.thermal != .nominal
         if state.showsWhyBusy, !state.things.isEmpty {
-            let rows = HeatSource.breakdown(state.things) { t in
+            let rows = HeatSource.breakdown(state.things, insights: state.insights) { t in
                 let series = state.thingSeries[t.id] ?? []
                 return series.count >= 3 ? series.suffix(12).reduce(0, +) / Double(min(12, series.count)) : t.cpu
             }
@@ -356,7 +356,10 @@ struct WhyBusyView: View {
 
     private func footnote(rows: [HeatSource.Row], throttling: Bool) -> String {
         var parts: [String] = []
-        if state.suggestions.isEmpty {
+        let leftOn = rows.contains { $0.source == .leftOn }
+        if state.suggestions.isEmpty && leftOn {
+            parts.append("Some of it is left running, but none of it can be closed right now; open its row below to see why.")
+        } else if state.suggestions.isEmpty {
             parts.append("None of it is safe to clean right now: it's all in use or part of macOS. Fans calm down as the work finishes.")
         } else {
             parts.append("The cards below are what's safe to clean; the rest is in use or part of macOS.")

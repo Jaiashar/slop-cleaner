@@ -28,8 +28,8 @@ When you work with AI coding agents, a lot gets left behind: an Android emulator
 - **Last used, for everything**: last in front for apps, last client for servers, last driven for emulators, last activity for Claude sessions. When it hasn't seen something used, it says "since Slop Cleaner started", never more than it knows.
 - **Sweep**: one button cleans everything on the list that's safe right now. It never includes your apps.
 - **Automate**: optionally close things after they've gone *unused* (not just open) for a while, with a 5-minute heads-up and a "Keep it running" button.
-- **Smart timing**: instead of one fixed number, it learns how you use each item (your usual breaks with it) and gives more time to anything you brought back after it was closed. What it learns stays on your Mac.
-- **Answers "why are my fans loud?"**: when your Mac is warm or busy, it shows where the load comes from (work in progress like builds and agent sessions, macOS's own background jobs like Spotlight and Photos analysis, your apps), even when nothing is safe to clean.
+- **Smart timing**: instead of one fixed number, it learns how you use each item (your usual breaks with it) and gives more time to anything you brought back after it was closed. What it costs while it waits caps the wait: something burning a core or more gets 2 hours at most, so an emulator you only come back to every other day doesn't idle at 7 cores in between. What it learns stays on your Mac.
+- **Answers "why are my fans loud?"**: when your Mac is warm or busy, it shows where the load comes from (work in progress like builds and agent sessions, devices and servers left running that nothing is using, macOS's own background jobs like Spotlight and Photos analysis, your apps), even when nothing is safe to clean.
 - **Flags apps that don't close**: if an app is asked to quit and stays open (usually it's asking about unsaved work), it shows up on the list with a "Show it" button.
 
 ## Your apps are yours
@@ -44,6 +44,8 @@ Every stop goes through one final check, made at that moment, that nothing can g
 - **anything in use right now**: the app in front (and its tabs and helpers), anything with a connection open to it, an emulator or simulator being driven by tests, a Claude session used in the last 30 minutes and anything it started,
 - **parts of an app** (browser tabs, helpers, extensions, an app's own background work). It only ever quits a whole app politely (like ⌘Q) so the app can ask about unsaved work. It never force-quits an app,
 - **your shells and terminals, databases** (Postgres, Redis, MySQL…), **Docker**, the Claude app, and itself.
+
+Background plumbing doesn't count as use: adb's server stays connected to every emulator, a simulator panel or log viewer only watches, and an idle `idb_companion` often outlives its last command. Driving means an `adb` command, Maestro, a test run, `xcodebuild` or `simctl` acting on the device.
 
 Emulators are shut down with `adb emu kill` (their snapshot is saved) and simulators with `simctl shutdown` (apps and data stay). Claude Code sessions in the Claude desktop app keep all their history and start again when you open them. Sessions you run in a terminal are shown but never stopped.
 
