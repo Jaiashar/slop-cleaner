@@ -147,6 +147,36 @@ final class SafetyTests: XCTestCase {
         XCTAssertEqual(server.origin, "Started from your terminal (Ghostty): make dev")
     }
 
+    /// Real case (11/22): an Expo server whose session had ended read "It's part of npm exec expo start's work.
+    /// Quit npm exec expo start if you want it gone": the leftover command was taken for an app.
+    func testOrphanedServerIsNotPartOfAnApp() {
+        let procs = [
+            // npm renames its process to one long title, and its parent is gone.
+            proc(65033, "node", path: "/opt/homebrew/bin/node", args: ["npm exec expo start --port 8095"], ageHours: 90),
+            proc(65055, "node", ppid: 65033, args: ["node", "/w/frontend/node_modules/.bin/expo", "start", "--port", "8095"],
+                 cwd: "/Users/x/w/frontend", ageHours: 90),
+        ]
+        let server = Classifier.classify(procs, home: home).things.first { $0.kind == .devServer }!
+        XCTAssertEqual(server.origin, "Started by npm exec expo start --port 8095")
+        XCTAssertNil(server.originApp)
+        let i = Rules.insights(ctx([server], History()))[server.id]!
+        XCTAssertFalse(i.safety.reasons.contains { $0.contains("'s work") }, i.safety.reasons.joined(separator: " | "))
+        XCTAssertEqual(i.safety.verdict, .safe)
+    }
+
+    func testServerStartedByAnAppIsThatAppsWork() {
+        let procs = [
+            proc(10, "AgentApp", path: "/Applications/AgentApp.app/Contents/MacOS/AgentApp", ageHours: 10),
+            proc(11, "node", ppid: 10, args: ["node", "/w/node_modules/.bin/vite"], cwd: "/Users/x/w", ageHours: 5),
+        ]
+        let things = Classifier.classify(procs, home: home).things
+        let server = things.first { $0.kind == .devServer }!
+        XCTAssertEqual(server.originApp, "AgentApp")
+        let i = Rules.insights(ctx(things, History()))[server.id]!
+        XCTAssertEqual(i.safety.verdict, .blocked)
+        XCTAssertEqual(i.safety.reasons.first, "It's part of AgentApp's work. Quit AgentApp if you want it gone.")
+    }
+
     func testMakeInsideXcodeIsNotXcode() {
         let things = Classifier.classify([
             proc(934, "Ghostty", path: "/Applications/Ghostty.app/Contents/MacOS/Ghostty", ageHours: 300),
@@ -224,6 +254,44 @@ final class AppsAreLeftAloneTests: XCTestCase {
         let h = History()
         h.seed(id: t.id, cpu: 1, minutes: 25, endingAt: now)
         XCTAssertTrue(Rules.evaluate(ctx(t, h)).isEmpty, "open for 9 days and unused is fine: apps are yours")
+    }
+
+    /// Real case (11/22): an editor unused for 5+ days kept a core busy re-scanning a repo (its source-control
+    /// helper), and got no card because only a stuck main process counted.
+    func editor(helperCPU: Double) -> Thing {
+        let main = ProcessSnapshot(pid: 2001, ppid: 1, uid: getuid(), name: "Editor",
+                                   path: "/Applications/Editor.app/Contents/MacOS/Editor", args: [], cwd: nil,
+                                   startTime: now.addingTimeInterval(-7 * 86400), cpu: 0, memory: 2 << 30)
+        let helper = ProcessSnapshot(pid: 2002, ppid: 1, uid: getuid(), name: "com.example.editor.git",
+                                     path: "/Applications/Editor.app/Contents/SharedFrameworks/Git.xpc/Contents/MacOS/com.example.editor.git",
+                                     args: [], cwd: nil, startTime: now.addingTimeInterval(-40), cpu: helperCPU, memory: 100 << 20)
+        return Classifier.classify([main, helper]).things[0]
+    }
+
+    func testUnusedAppBusyInTheBackgroundGetsAQuitCard() {
+        let t = editor(helperCPU: 60)
+        let h = History()
+        h.seed(id: t.id, cpu: 60, minutes: 16, endingAt: now)
+        h.markFront(t.id, at: now.addingTimeInterval(-2 * 86400))
+        let s = Rules.evaluate(ctx(t, h))
+        XCTAssertEqual(s.count, 1)
+        XCTAssertEqual(s[0].title, "Editor keeps half a core busy while you're not using it")
+        XCTAssertTrue(s[0].detail.hasPrefix("Last used 2 days ago, but its background work (com.example.editor.git) has used 0.6 cores"), s[0].detail)
+        if case .quitApp(let pid, _) = s[0].action { XCTAssertEqual(pid, 2001, "the app itself, never its helper") } else { XCTFail("polite ⌘Q only") }
+        XCTAssertTrue(AppState.sweepTargets(s).isEmpty, "Sweep never quits an app")
+        XCTAssertNil(AutoCategory.of(t), "and Automate never does")
+    }
+
+    func testRecentlyUsedAppIsNotNaggedForBackgroundWork() {
+        let t = editor(helperCPU: 60)
+        let h = History()
+        h.seed(id: t.id, cpu: 60, minutes: 16, endingAt: now)
+        h.markFront(t.id, at: now.addingTimeInterval(-3600))
+        XCTAssertTrue(Rules.evaluate(ctx(t, h)).isEmpty, "used an hour ago: half a core is its business")
+        let busy = editor(helperCPU: 98)
+        h.seed(id: busy.id, cpu: 98, minutes: 16, endingAt: now)
+        let s = Rules.evaluate(ctx(busy, h))
+        XCTAssertEqual(s.first?.action, SuggestedAction.none, "a busy helper of an app you use: a note, no button")
     }
 
     func testAStuckAppGetsACardButSweepNeverIncludesIt() {

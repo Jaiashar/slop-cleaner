@@ -203,16 +203,12 @@ enum Insights {
                 notes.append(t.ownerLabel ?? "Started by a Claude session.")
             }
         }
-        if let o = t.origin {
-            // Started by an open app that isn't a terminal or editor: it's that app's work, not yours to stop here.
-            if o.hasPrefix("Started by "), !o.hasPrefix("Started by the Claude session"), !o.hasPrefix("Started by a Claude session") {
-                let app = o.dropFirst("Started by ".count).split(separator: ":").first.map(String.init) ?? "an app"
-                if !Guard.launcherApps.contains(app), t.kind == .process || t.kind == .devServer {
-                    blocked.append("It's part of \(app)'s work. Quit \(app) if you want it gone.")
-                }
-            }
-            notes.append(o + ".")
+        // Started by an open app that isn't a terminal or editor: it's that app's work, not yours to stop here.
+        // (Only a real app: when the session that ran something has ended, all that's left is its command.)
+        if let app = t.originApp, !Guard.launcherApps.contains(app), t.kind == .process || t.kind == .devServer {
+            blocked.append("It's part of \(app)'s work. Quit \(app) if you want it gone.")
         }
+        if let o = t.origin { notes.append(o + ".") }
         if case .devServer = t.kind, !t.listenPorts.isEmpty {
             notes.append("Listening on port\(t.listenPorts.count == 1 ? "" : "s") \(t.listenPorts.map(String.init).joined(separator: ", ")).")
         }

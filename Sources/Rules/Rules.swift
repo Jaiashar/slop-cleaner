@@ -200,10 +200,20 @@ enum Rules {
 
     // MARK: - Runaway processes
 
+    /// An app you haven't used in this long only needs half a core in the background to be worth a look.
+    static let unusedAppAge: TimeInterval = 6 * 3600
+    static let unusedAppCPU: Double = 50
+
     private static func runaway(_ t: Thing, _ c: RuleContext, _ src: InsightSource) -> Suggestion? {
         let window = c.thresholds.runawayWindow
-        guard t.cpu >= c.thresholds.runawayCPU * 0.5,      // cheap: not even busy right now
-              let avg = c.history.average(t.id, window: window, now: c.now), avg >= c.thresholds.runawayCPU else { return nil }
+        let unusedApp: Bool = {
+            guard case .app = t.kind else { return false }
+            let unused = c.history.lastFront[t.id].map { c.now.timeIntervalSince($0) } ?? c.history.observed(t.id, now: c.now)
+            return unused >= unusedAppAge
+        }()
+        let limit = unusedApp ? min(c.thresholds.runawayCPU, unusedAppCPU) : c.thresholds.runawayCPU
+        guard t.cpu >= limit * 0.5,      // cheap: not even busy right now
+              let avg = c.history.average(t.id, window: window, now: c.now), avg >= limit else { return nil }
         let i = src[t]
         if t.processes.contains(where: { $0.pid == c.selfPID }) { return nil }
         if let f = c.frontmostPID, t.processes.contains(where: { $0.pid == f }) { return nil } // you're using it
@@ -225,6 +235,16 @@ enum Rules {
                 evidence: evidence, action: .copyCommand("sudo killall \(hot.name)"), actionTitle: "Copy command",
                 notify: true, ignoreLabel: t.title)
         case .app:
+            if unusedApp {
+                // Not stuck, just busy in the background while you're not using it (e.g. an editor re-indexing
+                // or re-scanning a repo that agents keep changing). Only ever a polite ⌘Q from this button.
+                return Suggestion(
+                    id: "runaway:\(t.title)", thingID: t.id, severity: .info, symbol: t.symbol,
+                    title: "\(t.title) keeps \(Format.coresPhrase(avg)) busy while you're not using it",
+                    detail: "\(i.usage.text.capitalizedFirst), but \(hot.name == t.title ? "it" : "its background work (\(hot.name))") has used \(Format.cores(avg)) for \(Format.duration(window))+. Quitting \(t.title) stops it; it asks about unsaved work like ⌘Q, and starts fresh when you open it again.",
+                    evidence: evidence + ["unused"], action: .quitApp(pid: t.root.pid, start: t.root.startTime),
+                    actionTitle: "Quit \(t.title)", notify: true, ignoreLabel: t.title)
+            }
             if hot.pid == t.root.pid {
                 return Suggestion(
                     id: "runaway:\(t.title)", thingID: t.id, severity: .suggest, symbol: t.symbol, title: title,

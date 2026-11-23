@@ -148,11 +148,10 @@ enum Classifier {
             guard var t = things[id], t.ownerLabel == nil else { continue }
             switch t.kind {
             case .devServer, .testRun, .buildDaemon, .process, .androidEmulator:
-                if let cache = origins {
-                    t.origin = cache.value(for: t.root.key) { origin(of: t.root, byPid: byPid, owner: owner, things: things) }
-                } else {
-                    t.origin = origin(of: t.root, byPid: byPid, owner: owner, things: things)
-                }
+                let o = origins.map { $0.value(for: t.root.key) { origin(of: t.root, byPid: byPid, owner: owner, things: things) } }
+                    ?? origin(of: t.root, byPid: byPid, owner: owner, things: things)
+                t.origin = o?.text
+                t.originApp = o?.app
                 things[id] = t
             default:
                 break
@@ -170,22 +169,29 @@ enum Classifier {
     static let terminalApps = ["Ghostty", "Terminal", "iTerm2", "iTerm", "Warp", "WezTerm", "Alacritty", "kitty",
                                "Cursor", "Code", "Visual Studio Code", "Android Studio", "Xcode", "Zed"]
 
+    struct Origin: Hashable {
+        var text: String
+        /// The open app it came from; nil for a Claude session or when only the command is known.
+        var app: String? = nil
+    }
+
     /// Walks up the parent chain: a Claude session, or a terminal app with the command that was typed.
     static func origin(of p: ProcessSnapshot, byPid: [Int32: ProcessSnapshot], owner: [Int32: String],
-                       things: [String: Thing]) -> String? {
+                       things: [String: Thing]) -> Origin? {
         var command: String? = nil
         var sawShell = false
         var cur = byPid[p.ppid]
         var hops = 0
         while let q = cur, q.pid > 1, hops < 12 {
             if let o = owner[q.pid], o.hasPrefix("claude:"), let s = things[o] {
-                return s.title == "Claude Code session" ? "Started by a Claude session (\(s.subtitle))"
-                                                       : "Started by the Claude session “\(s.title)”"
+                return Origin(text: s.title == "Claude Code session" ? "Started by a Claude session (\(s.subtitle))"
+                                                                    : "Started by the Claude session “\(s.title)”")
             }
             if let o = owner[q.pid], o.hasPrefix("app:"), let a = things[o], q.path.contains("/Contents/MacOS/") {
                 let name = a.title
                 let cmd = command.map { ": \($0)" } ?? ""
-                return terminalApps.contains(name) ? "Started from your terminal (\(name))\(cmd)" : "Started by \(name)\(cmd)"
+                return Origin(text: terminalApps.contains(name) ? "Started from your terminal (\(name))\(cmd)" : "Started by \(name)\(cmd)",
+                              app: name)
             }
             let isShell = ["zsh", "-zsh", "bash", "-bash", "sh", "fish", "-fish", "login"].contains(q.name)
             // The typed command is the last non-shell below the interactive shell.
@@ -197,7 +203,8 @@ enum Classifier {
             cur = byPid[q.ppid]
             hops += 1
         }
-        return command.map { "Started by \($0)" }
+        // Its parents are gone (e.g. the session that ran it ended): all that's left is the command.
+        return command.map { Origin(text: "Started by \($0)") }
     }
 
     // MARK: - Detection helpers
@@ -368,10 +375,10 @@ enum Classifier {
 
 /// Remembers each process's origin; a process's parents never change while it lives.
 final class OriginCache {
-    private var map: [String: String?] = [:]
+    private var map: [String: Classifier.Origin?] = [:]
     private var touched = Set<String>()
 
-    func value(for key: String, compute: () -> String?) -> String? {
+    func value(for key: String, compute: () -> Classifier.Origin?) -> Classifier.Origin? {
         touched.insert(key)
         if let v = map[key] { return v }
         let v = compute()

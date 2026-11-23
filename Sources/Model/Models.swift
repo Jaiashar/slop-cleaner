@@ -58,6 +58,8 @@ struct Thing: Identifiable, Hashable {
     var ownerID: String? = nil
     /// Where it came from, when we can tell: "Started from your terminal (Ghostty): make dev".
     var origin: String? = nil
+    /// The open app that started it, if one did (not a command or a Claude session).
+    var originApp: String? = nil
     /// TCP ports it listens on, and who is connected right now (filled in by the Engine).
     var listenPorts: [UInt16] = []
     var clients: [String] = []

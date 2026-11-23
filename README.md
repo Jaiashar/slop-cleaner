@@ -34,7 +34,7 @@ When you work with AI coding agents, a lot gets left behind: an Android emulator
 
 ## Your apps are yours
 
-Apps you open yourself (Spotify, your browser, your editor, Slack…) are never closed for you. Slop Cleaner tells them apart by where they live: anything inside an app bundle (like `/Applications/Spotify.app`) is that app, and the things it cleans up are recognized by what they are (an Android emulator process, a simulator, a dev server like Vite or Expo, a Claude Code session). Automate has no setting for apps at all, Sweep skips them, and an app that's open but idle is never even suggested. The one exception: if an app's main process is stuck at a full CPU core for 15+ minutes while you're not using it, you'll see a card, and only if you click its Quit button does it get a polite ⌘Q (it can still ask you about unsaved work).
+Apps you open yourself (Spotify, your browser, your editor, Slack…) are never closed for you. Slop Cleaner tells them apart by where they live: anything inside an app bundle (like `/Applications/Spotify.app`) is that app, and the things it cleans up are recognized by what they are (an Android emulator process, a simulator, a dev server like Vite or Expo, a Claude Code session). Automate has no setting for apps at all, Sweep skips them, and an app that's open but idle is never even suggested. The one exception: if an app's main process is stuck at a full CPU core for 15+ minutes while you're not using it, or an app you haven't used in 6+ hours keeps half a core busy in the background (an editor re-scanning a repo that agents keep changing, say), you'll see a card, and only if you click its Quit button does it get a polite ⌘Q (it can still ask you about unsaved work).
 
 ## It never breaks what you're using
 
